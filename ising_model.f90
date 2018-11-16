@@ -6,17 +6,21 @@
 
 module ising_model
 use ising_utils
+use ising_parms
 implicit none
-	logical :: PBC = .true.
+	logical :: PBC = .true.     !-- if boundary condition
+	logical :: PRT = .false.    !-- if print info at each step
+	
 	integer :: out_unit = 20
-	integer, private :: set_Nstep
-	real(8), private :: set_beta
+	
+	real(8), dimension(:), allocatable :: array_H, array_S
+	real(8), dimension(:), allocatable :: array_G
+	
 
 type ising
 	type(integer), dimension(:,:), allocatable :: grid
 	integer :: sz
-	real(8) :: J, h, b
-	real(8) :: sumH, sumS
+	real(8) :: avgH, avgS
 end type ising
 
 contains
@@ -27,13 +31,19 @@ subroutine alloc_ising(myising,isize)
 	type(ising), intent(inout) :: myising
 	integer, intent(in) :: isize
 	integer :: i,j
-	myising%sz = isize
+	Nsize = isize
 	allocate(myising%grid(isize,isize))
 	do j=1,isize
 		do i=1,isize
 			myising%grid(i,j)= 1-2*rand_int(0,1)
 		enddo
 	enddo
+	!-- global allocating
+	if(.not. allocated(array_H)) then
+	    allocate(array_H(Nstep))
+	    allocate(array_S(Nstep))
+	    allocate(array_G(Nsize/2))
+	endif
 end subroutine alloc_ising
 
 
@@ -43,29 +53,14 @@ end subroutine alloc_ising
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 subroutine guess_ising(myising)
 	type(ising), intent(inout) :: myising
-	integer :: i,j,sz
+	integer :: i,j
 	if(.not. allocated(myising%grid)) stop "overstack error at guess_ising" 
-	sz = myising%sz
-	do j=1,sz
-		do i=1,sz
+	do j=1,Nsize
+		do i=1,Nsize
 			myising%grid(i,j)= 1-2*rand_int(0,1)
 		enddo
 	enddo
 end subroutine guess_ising
-
-
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-!-- set parameters of ising type
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-subroutine set_ising(myising,iJ,ih,ib)
-	type(ising), intent(inout) :: myising
-	real(8), intent(in) :: iJ, ih, ib
-	myising%J = iJ
-	myising%h = ih
-	myising%b = ib
-	myising%sumH = 0.0
-	myising%sumS = 0.0
-end subroutine set_ising
 
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -75,6 +70,12 @@ subroutine del_ising(myising)
 	type(ising), intent(inout) :: myising
 	if(allocated(myising%grid)) then
 	    deallocate(myising%grid)
+	endif
+	!-- gloabal deallocating
+	if(allocated(array_H)) then
+	    deallocate(array_H)
+	    deallocate(array_S)
+	    deallocate(array_G)
 	endif
 end subroutine del_ising
 
@@ -88,29 +89,29 @@ function local_H(myising, i1, i2) result(H)
 	integer, intent(in) :: i1,i2
 	integer :: i1m,i1p,i2m,i2p
 	if(PBC) then
-		i1m = mod(i1-2+myising%sz, myising%sz) + 1
-		i2m = mod(i2-2+myising%sz, myising%sz) + 1
-		i1p = mod(i1+myising%sz, myising%sz) + 1
-		i2p = mod(i2+myising%sz, myising%sz) + 1
+		i1m = mod(i1-2+Nsize, Nsize) + 1
+		i2m = mod(i2-2+Nsize, Nsize) + 1
+		i1p = mod(i1+Nsize, Nsize) + 1
+		i2p = mod(i2+Nsize, Nsize) + 1
 		
-		H = - myising%h * myising%grid(i1,i2)
-		H = H - myising%J * myising%grid(i1,i2)* myising%grid(i1p,i2)
-		H = H - myising%J * myising%grid(i1,i2)* myising%grid(i1m,i2)
-		H = H - myising%J * myising%grid(i1,i2)* myising%grid(i1,i2p)
-		H = H - myising%J * myising%grid(i1,i2)* myising%grid(i1,i2m)
+		H = - parmh * myising%grid(i1,i2)
+		H = H - parmJ * myising%grid(i1,i2)* myising%grid(i1p,i2)
+		H = H - parmJ * myising%grid(i1,i2)* myising%grid(i1m,i2)
+		H = H - parmJ * myising%grid(i1,i2)* myising%grid(i1,i2p)
+		H = H - parmJ * myising%grid(i1,i2)* myising%grid(i1,i2m)
 	else
-		H = - myising%h * myising%grid(i1,i2)
+		H = - parmh * myising%grid(i1,i2)
 		if(i1>1) then
-			H = H - myising%J * myising%grid(i1,i2)* myising%grid(i1-1,i2)
+			H = H - parmJ * myising%grid(i1,i2)* myising%grid(i1-1,i2)
 		endif
 		if(i2>1) then
-			H = H - myising%J * myising%grid(i1,i2)* myising%grid(i1,i2-1)
+			H = H - parmJ * myising%grid(i1,i2)* myising%grid(i1,i2-1)
 		endif
-		if(i1 < myising%sz) then
-			H = H - myising%J * myising%grid(i1,i2)* myising%grid(i1+1,i2)
+		if(i1 < Nsize) then
+			H = H - parmJ * myising%grid(i1,i2)* myising%grid(i1+1,i2)
 		endif
-		if(i2 < myising%sz) then
-			H = H - myising%J * myising%grid(i1,i2)* myising%grid(i1,i2+1)
+		if(i2 < Nsize) then
+			H = H - parmJ * myising%grid(i1,i2)* myising%grid(i1,i2+1)
 		endif
 	endif
 end function local_H
@@ -119,65 +120,21 @@ end function local_H
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 !-- return Sum of the Hamiltonian of the grid
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-subroutine sum_H(H, myising, iflag)
+subroutine avg_H(H, myising)
 	real(8), intent(out):: H
 	type(ising), intent(inout) :: myising
-	integer, intent(in), optional :: iflag
-	integer :: flag,i,j,sz
-	if(present(iflag)) then
-		flag = iflag
-	else
-		flag = 1 ! default, not using sum-local-H approach, recommend myising
-	endif
-	
-	sz = myising%sz
-	if(flag.eq.0) then
-		H = 0.0
-		do j=1,sz
-			do i=1,sz
-			    !-- sum of local hamiltonians counts for 2 times of total Hamiltonian 
-				H = H + 0.5 * local_H(myising,i,j)
-			enddo
-		enddo
-		if(PBC) then
-		    myising%sumH = H
-		    return
-		endif
-		!-- if not PBC, subtract the boundary interaction (subtract means + J*si*sj)
-		do i=1,sz
-			H = H + myising%J * myising%grid(1,i)* myising%grid(sz,i)
-			H = H + myising%J * myising%grid(i,1)* myising%grid(i,sz)
-		enddo
-	elseif(flag.eq.1) then
-		H = 0.0
-		do j=1,sz-1
-			do i=1,sz-1
-				H = H - myising%h * myising%grid(i,j)
-				H = H - myising%J * myising%grid(i,j)* myising%grid(i+1,j)
-				H = H - myising%J * myising%grid(i,j)* myising%grid(i,j+1)
-			enddo
-			H = H - myising%h * myising%grid(sz,j)
-			H = H - myising%J * myising%grid(sz,j)* myising%grid(sz,j+1)
-			H = H - myising%h * myising%grid(j,sz)
-			H = H - myising%J * myising%grid(j,sz)* myising%grid(j+1,sz)
-		enddo
-		H = H - myising%h * myising%grid(sz,sz)
-		!-- if not PBC, end here
-		if(.not. PBC) then
-		    myising%sumH = H
-		    return
-		endif
-		!-- otherwise, adding boundary interaction
-		do i=1,sz
-			H = H - myising%J * myising%grid(1,i)* myising%grid(sz,i)
-			H = H - myising%J * myising%grid(i,1)* myising%grid(i,sz)
-		enddo
-	else
-		stop "flag error at sum_H"
-	endif
-	myising%sumH = H
+	integer :: i,j
+
+    H = -parmh * sum(myising%grid)
+    H = H - parmJ * sum( myising%grid(1:Nsize-1,:) * myising%grid(2:Nsize,:) )
+    if(PBC) H = H - parmJ * sum( myising%grid(1,:) * myising%grid(Nsize,:) )
+    H = H - parmJ * sum( myising%grid(:,1:Nsize-1) * myising%grid(:,2:Nsize) )
+    if(PBC) H = H - parmJ * sum( myising%grid(1,:) * myising%grid(Nsize,:) )
+
+	H = H/(Nsize**2)
+	myising%avgH = H
 	return
-end subroutine sum_H
+end subroutine avg_H
 
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -187,13 +144,13 @@ function local_S(myising, i1, i2) result(S)
 	integer :: S
 	type(ising), intent(in) :: myising
 	integer, intent(in) :: i1,i2
-	integer :: i1m,i1p,i2m,i2p,sz
+	integer :: i1m,i1p,i2m,i2p,Nsize
 	S = 0
 	if(PBC) then
-		i1m = mod(i1-1+myising%sz, myising%sz)
-		i2m = mod(i2-1+myising%sz, myising%sz)
-		i1p = mod(i1+1+myising%sz, myising%sz)
-		i1p = mod(i2+1+myising%sz, myising%sz)
+		i1m = mod(i1-1+Nsize, Nsize)
+		i2m = mod(i2-1+Nsize, Nsize)
+		i1p = mod(i1+1+Nsize, Nsize)
+		i1p = mod(i2+1+Nsize, Nsize)
 		S = myising%grid(i1,i2)
 		S = S + myising%grid(i1p,i2)
 		S = S + myising%grid(i1m,i2)
@@ -207,10 +164,10 @@ function local_S(myising, i1, i2) result(S)
 		if(i2>0) then
 			S = S + myising%grid(i1,i2-1)
 		endif
-		if(i1 < myising%sz) then
+		if(i1 < Nsize) then
 			S = S + myising%grid(i1+1,i2)
 		endif
-		if(i2 < myising%sz) then
+		if(i2 < Nsize) then
 			S = S + myising%grid(i1,i2+1)
 		endif
 	endif
@@ -220,89 +177,45 @@ end function local_S
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 !-- return Sum of the Spin of the grid
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-subroutine sum_S(S, myising)
-	integer, intent(out) :: S
+subroutine avg_S(S, myising)
+	real(8), intent(out) :: S
 	type(ising), intent(inout) :: myising
-	integer :: i,j,sz
-	sz = myising%sz
-	S = 0
-	do j=1,sz
-		do i=1,sz
-			S = S + myising%grid(i,j)
-		enddo
-	enddo
-	myising%sumS = S
-end subroutine sum_S
+	integer :: i,j
+	S = sum(myising%grid)
+	S = S/(Nsize**2)
+	myising%avgS = S
+end subroutine avg_S
 
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 !-- Metropolis algorithm process (Gibbs sampling)
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-subroutine ising_gibbs(myising, iflag)
+subroutine ising_gibbs(myising)
 	type(ising), intent(inout) :: myising
-	integer, optional :: iflag
-	type(ising) :: tmp_ising
-	integer :: sz, rn1, rn2, flag
+	integer :: rn1, rn2
 	real(8) :: rn
-	real(8) :: dH, tmp_H, old_H
-	integer :: tmp_S
+	real(8) :: dH, tmp_S, tmp_H, old_H
 	
-	if(present(iflag)) then
-	    flag = iflag
+	!-- generating preselection
+	rn1 = rand_int(1,Nsize)
+	rn2 = rand_int(1,Nsize)
+	
+	!-- metropolis algorithm
+	dH = -2 * local_H(myising,rn1,rn2)
+	
+    if(dH<=0) then
+		myising%avgS = myising%avgS - 2 * myising%grid(rn1,rn2) / real(Nsize**2)
+		myising%avgH = myising%avgH + dH / real(Nsize**2)
+		myising%grid(rn1,rn2) = - myising%grid(rn1,rn2)	
 	else
-	    flag = 0  !-- move only one step
+		call random_number(rn)
+		if(rn < exp(-parmb * dH)) then
+		    myising%avgS = myising%avgS - 2 * myising%grid(rn1,rn2) / real(Nsize**2)
+		    myising%avgH = myising%avgH + dH / real(Nsize**2)
+		    myising%grid(rn1,rn2) = - myising%grid(rn1,rn2)
+		endif
 	endif
 	
-	sz = myising%sz
-	if(flag .eq. 0) then
-	    !-- generating preselection
-	    rn1 = rand_int(1,sz)
-	    rn2 = rand_int(1,sz)
-	    
-	    !-- metropolis algorithm
-	    dH = -2 * local_H(myising,rn1,rn2)
-	    
-    	if(dH<=0) then
-	    	myising%sumS = myising%sumS - 2 * myising%grid(rn1,rn2)
-	    	!old_H = myising%sumH
-	    	myising%sumH = myising%sumH + dH
-	    	myising%grid(rn1,rn2) = - myising%grid(rn1,rn2)
-	    	!call sum_H(tmp_H, myising)
-	    	!if(tmp_H - old_H .ne. dH) then
-	    	!    print *, tmp_H, old_H, dH
-	    	!endif   	
-	    else
-	    	call random_number(rn)
-	    	if(rn < exp(-myising%b * dH)) then
-	    	    myising%sumS = myising%sumS - 2 * myising%grid(rn1,rn2)
-	    	    !old_H = myising%sumH
-	    	    myising%sumH = myising%sumH + dH
-	    		myising%grid(rn1,rn2)= - myising%grid(rn1,rn2)
-	    		!call sum_H(tmp_H, myising)
-	        	!if(tmp_H - old_H .ne. dH) then
-	        	!    print *, tmp_H, old_H, dH
-	        	!endif
-	    	endif
-	    endif
-	else if(flag .eq. 1) then
-	    call alloc_ising(tmp_ising, sz)
-	    call sum_H(tmp_H, tmp_ising)
-	    call sum_S(tmp_S, tmp_ising)
-	    dH = tmp_ising%sumH - myising%sumH
-	    
-	    if(dH<=0) then
-	    	myising = tmp_ising
-	    else
-	    	call random_number(rn)
-	    	if(rn < exp(-myising%b * dH)) then
-	    	    myising = tmp_ising
-	    	endif
-	    endif
-	    
-	    call del_ising(tmp_ising)
-	else
-	    stop "flag error"
-	endif
 end subroutine ising_gibbs
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -311,12 +224,12 @@ end subroutine ising_gibbs
 recursive subroutine adjoint_makesame(myising,i,j,bonds)
     type(ising), intent(inout) :: myising
     integer, intent(in) :: i,j
-    integer, dimension(myising%sz,myising%sz,5), intent(inout) :: bonds
-    integer :: sz, newi, newj
-    sz = myising%sz
+    integer, dimension(Nsize,Nsize,5), intent(inout) :: bonds
+    integer :: newi, newj
+
     !-- check up
     if(bonds(i,j,1) .eq. 1) then
-        newi = mod(i-2+sz,sz)+1
+        newi = mod(i-2+Nsize,Nsize)+1
         if(bonds(newi,j,5).eq. 1) then
             bonds(newi,j,5) = 0
             myising%grid(newi,j) = myising%grid(i,j)
@@ -325,7 +238,7 @@ recursive subroutine adjoint_makesame(myising,i,j,bonds)
     endif
     !-- check right
     if(bonds(i,j,2) .eq. 1) then
-        newj = mod(j,sz)+1
+        newj = mod(j,Nsize)+1
         if(bonds(i,newj,5).eq. 1) then
             bonds(i,newj,5) = 0
             myising%grid(i,newj) = myising%grid(i,j)
@@ -334,7 +247,7 @@ recursive subroutine adjoint_makesame(myising,i,j,bonds)
     endif
     !-- check down
     if(bonds(i,j,3) .eq. 1) then
-        newi = mod(i,sz)+1
+        newi = mod(i,Nsize)+1
         if(bonds(newi,j,5).eq. 1) then
             bonds(newi,j,5) = 0
             myising%grid(newi,j) = myising%grid(i,j)
@@ -343,7 +256,7 @@ recursive subroutine adjoint_makesame(myising,i,j,bonds)
     endif
     !-- check left
     if(bonds(i,j,4) .eq. 1) then
-        newj = mod(j-2+sz,sz)+1
+        newj = mod(j-2+Nsize,Nsize)+1
         if(bonds(i,newj,5).eq. 1) then
             bonds(i,newj,5) = 0
             myising%grid(i,newj) = myising%grid(i,j)
@@ -352,14 +265,14 @@ recursive subroutine adjoint_makesame(myising,i,j,bonds)
     endif
 end subroutine adjoint_makesame
 
+
 subroutine randby_area(myising, bonds)
     type(ising), intent(inout) :: myising
-    integer, dimension(myising%sz,myising%sz,5), intent(inout) :: bonds
-    integer :: i,j,sz,rn0
+    integer, dimension(Nsize,Nsize,5), intent(inout) :: bonds
+    integer :: i,j,rn0
 
-    sz=myising%sz
-    do i=1,sz
-        do j=1,sz
+    do i=1,Nsize
+        do j=1,Nsize
             if(bonds(i,j,5).eq.1) then
                 bonds(i,j,5) = 0
                 rn0 = 1 - 2*rand_int(0,1)
@@ -372,18 +285,18 @@ end subroutine randby_area
 
 subroutine ising_swendsenwang(myising)
     type(ising), intent(inout) :: myising
-    integer, dimension(myising%sz, myising%sz,5) :: bonds
+    integer, dimension(Nsize, Nsize,5) :: bonds
     real(8) :: irn, exp2bJ
-    integer :: i,j,sz,newi,newj
-    sz = myising%sz
-    exp2bJ = dexp(2*myising%b*myising%J)
+    integer :: i,j,newi,newj
+
+    exp2bJ = dexp(2*parmb*parmJ)
     bonds = 0
     if(PBC) then
-        do i=1,sz
-            do j=1,sz                                
+        do i=1,Nsize
+            do j=1,Nsize                                
                 !-- bondij(2) --- (i,j) ~ (i,j+1)
                 !-- bondij(4) --- (i,j) ~ (i,j-1)
-                newj = mod(j,sz)+1
+                newj = mod(j,Nsize)+1
                 if(myising%grid(i,j).eq.myising%grid(i,newj)) then
                     call random_number(irn)
                     if(irn*exp2bJ > 1) then
@@ -394,7 +307,7 @@ subroutine ising_swendsenwang(myising)
                 
                 !-- bondij(1) --- (i,j) ~ (i-1,j)
                 !-- bondij(3) --- (i,j) ~ (i+1,j)
-                newi = mod(i,sz)+1
+                newi = mod(i,Nsize)+1
                 if(myising%grid(i,j).eq.myising%grid(newi,j)) then
                     call random_number(irn)
                     if(irn*exp2bJ > 1) then
@@ -403,7 +316,7 @@ subroutine ising_swendsenwang(myising)
                     endif
                 endif
                                                
-                !-- bondij(5) --- (i,j) is flip or not
+                !-- bondij(5) --- record (i,j) flip status
                 bonds(i,j,5) = 1
             enddo
         enddo
@@ -413,24 +326,23 @@ subroutine ising_swendsenwang(myising)
     endif
 end subroutine ising_swendsenwang
 
+
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 !-- Wolff sampling
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 recursive subroutine next_wolff(myising,i,j,bonds)
     type(ising), intent(inout) :: myising
     integer, intent(in) :: i,j
-    integer, dimension(myising%sz, myising%sz,5), intent(inout) :: bonds
-    integer :: newi,newj,sz
+    integer, dimension(Nsize, Nsize,5), intent(inout) :: bonds
+    integer :: newi,newj
     real(8) :: exp2bJ,irn
     
-    sz = myising%sz
-    exp2bJ = dexp(2*myising%b*myising%J)
+    exp2bJ = dexp(2*parmb*parmJ)
     bonds(i,j,5) = 1 !-- mark origin point
     
     !-- up
-    newi = mod(i-2+sz,sz)+1
+    newi = mod(i-2+Nsize,Nsize)+1
     if(myising%grid(i,j).ne.myising%grid(newi,j) .and. bonds(newi,j,5).eq. 0) then
-        !print *, 'up'
         call random_number(irn)
         if(irn*exp2bJ > 1) then
             !print *, 'rand suc'
@@ -442,7 +354,7 @@ recursive subroutine next_wolff(myising,i,j,bonds)
     endif
     
     !-- right
-    newj = mod(j,sz)+1
+    newj = mod(j,Nsize)+1
     if(myising%grid(i,j).ne.myising%grid(i,newj) .and. bonds(i,newj,5).eq. 0) then
         !print *, 'right'
         call random_number(irn)
@@ -456,7 +368,7 @@ recursive subroutine next_wolff(myising,i,j,bonds)
     endif
     
     !-- down
-    newi = mod(i,sz)+1
+    newi = mod(i,Nsize)+1
     if(myising%grid(i,j).ne.myising%grid(newi,j) .and. bonds(newi,j,5).eq. 0) then
         !print *, 'down'
         call random_number(irn)
@@ -470,7 +382,7 @@ recursive subroutine next_wolff(myising,i,j,bonds)
     endif
     
     !-- left
-    newj = mod(j-2+sz,sz)+1
+    newj = mod(j-2+Nsize,Nsize)+1
     if(myising%grid(i,j).ne.myising%grid(i,newj) .and. bonds(i,newj,5).eq. 0) then
         !print *, 'left'
         call random_number(irn)
@@ -486,96 +398,155 @@ end subroutine next_wolff
 
 subroutine ising_wolff(myising)
     type(ising), intent(inout) :: myising
-    integer, dimension(myising%sz, myising%sz,5) :: bonds
-    integer :: rn1, rn2, sz
-    sz = myising%sz
-    rn1 = rand_int(1,sz)
-    rn2 = rand_int(1,sz)
-    !print *, myising%grid+1
-    !print *, 'choose ', rn1, rn2
+    integer, dimension(Nsize, Nsize,5) :: bonds
+    integer :: rn1, rn2
+
+    rn1 = rand_int(1,Nsize)
+    rn2 = rand_int(1,Nsize)
     
+    !-- flip a random site
     myising%grid(rn1,rn2) = - myising%grid(rn1,rn2)
     bonds = 0
-    !print *, myising%grid+1
+    !-- (recursively) flip its neighborhood site according bonds
     call next_wolff(myising,rn1,rn2,bonds)
-    !print *, myising%grid+1
-    !stop 'debug'
+
 end subroutine ising_wolff
 
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-!-- KMC
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-subroutine ising_kmc(myising)
-    type(ising), intent(inout) :: myising
-    integer :: rn1, rn2, rn
-end subroutine ising_kmc
-
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-!-- Quench simulation
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-!-- Tempering
-!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 !-- Kinetic Monte Carlo (BKL algorithm)
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+subroutine ising_kmc(myising)
+    type(ising), intent(inout) :: myising
+    integer :: rn1, rn2, rn
+    stop 'not support now'
+end subroutine ising_kmc
+
 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 !-- Simulation at a specific beta 
 !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-subroutine ising_simul(myising, N, ibeta)
-use ising_parms, only:samp_type
+subroutine ising_simul(myising)
+use ising_parms
     type(ising), intent(inout) :: myising
-	integer, intent(in) :: N
-	real(8), intent(in) :: ibeta
-	real(8) :: nowJ, nowh, rcdH, N2
-	integer :: rcdS, i
+	real(8) :: rcdS, rcdH
+	real(8) :: avgH, stdH, avgM, stdM
+	integer :: i
 	
-	!-- set model paramaters
-	set_Nstep = N
-	set_beta = ibeta
-	N2 = myising%sz ** 2
-	
-	!-- init. guess
-	nowJ = myising%J
-	nowh = myising%h
-	call set_ising(myising, nowJ, nowH, set_beta)
 	call guess_ising(myising)
-	call sum_H(rcdH, myising)
-	call sum_S(rcdS, myising)
+	call avg_H(rcdH, myising)
+	call avg_S(rcdS, myising)
 	!print *, myising%grid
 	!stop
 	if(samp_type .eq. 0) then
-	    do i=1,set_Nstep
+	    do i=1,Nstep
 		    call ising_gibbs(myising)
 		    !-- needn't, for if we recise H,S at one step moving
-            !call sum_H(rcdH, myising) !-- for metropolis, needn't
-	        !call sum_S(rcdS, myising) !-- for metropolis, needn't
-
-		    write(out_unit,*) i, myising%sumH / N2, myising%sumS / N2
+            !call avg_H(rcdH, myising) !-- for metropolis, needn't
+	        !call avg_S(rcdS, myising) !-- for metropolis, needn't
+            array_H(i) = myising%avgH
+            array_S(i) = myising%avgS
+		    if(PRT) write(out_unit,*) i, myising%avgH , myising%avgS 
 	    enddo
 	elseif(samp_type .eq. 1) then
-	    do i=1,set_Nstep
+	    do i=1,Nstep
             !-- swendsen-wang
             call ising_swendsenwang(myising)
-            call sum_H(rcdH, myising)
-	        call sum_S(rcdS, myising)
-		    write(out_unit,*) i, myising%sumH / N2, myising%sumS / N2
+            call avg_H(rcdH, myising)
+	        call avg_S(rcdS, myising)
+	        array_H(i) = myising%avgH
+            array_S(i) = myising%avgS
+		    if(PRT) write(out_unit,*) i, myising%avgH , myising%avgS 
 	    enddo
 	elseif(samp_type .eq. 2) then
-	    do i=1,set_Nstep
+	    do i=1,Nstep
             !-- wolff
             call ising_wolff(myising)
-            call sum_H(rcdH, myising)
-	        call sum_S(rcdS, myising)
-		    write(out_unit,*) i, myising%sumH / N2, myising%sumS / N2
+            call avg_H(rcdH, myising)
+	        call avg_S(rcdS, myising)
+	        array_H(i) = myising%avgH
+            array_S(i) = myising%avgS
+		    if(PRT) write(out_unit,*) i, myising%avgH , myising%avgS 
 	    enddo
 	else
 	    stop 'unknown args'
 	endif
+	
+	avgH = sum(array_H) / Nstep
+	stdH = sum(array_H**2/Nstep) - avgH**2
+	avgM = sum(array_S) / Nstep
+	stdM = sum(array_S**2/Nstep) - avgM**2
+	
+	print *, avgH, stdH, avgM, stdM
 end subroutine ising_simul
+
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+!-- Spatial Correlation
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+subroutine ising_spincorrel(gd,i)
+    integer, dimension(Nsize,Nsize), intent(in) :: gd
+    integer, intent(in) :: i
+    integer, dimension(Nsize/2) :: tmp
+    integer :: j,k,effk
+    
+    if(i.eq.1) array_G = 0
+    
+    tmp = 0
+    do j=1,Nsize
+        do k=1,Nsize/2
+            effk = mod(j+k-1, Nsize) + 1
+            tmp(k) = tmp(k) + sum(gd(:,j)*gd(:,effk))
+            tmp(k) = tmp(k) + sum(gd(j,:)*gd(effk,:))
+        enddo
+    enddo
+    
+    array_G = ( array_G*(i-1) + tmp/real(2*Nsize**2) ) / real(i)
+    
+end subroutine ising_spincorrel
+
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+!-- Simulation at a specific beta 
+!%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+subroutine ising_configcorrel(myising)
+use ising_parms
+    type(ising), intent(inout) :: myising
+	real(8) :: rcdS, rcdH
+	real(8) :: avgH, stdH, avgM, stdM
+	integer :: i
+	
+	call guess_ising(myising)
+	call avg_H(rcdH, myising)
+	call avg_S(rcdS, myising)
+	!print *, myising%grid
+	!stop
+	if(samp_type .eq. 0) then
+	    do i=1,Nstep
+		    call ising_gibbs(myising)
+		    !-- needn't, for if we recise H,S at one step moving
+            !call avg_H(rcdH, myising) !-- for metropolis, needn't
+	        !call avg_S(rcdS, myising) !-- for metropolis, needn't
+            call ising_spincorrel(myising%grid, i)
+	    enddo
+	elseif(samp_type .eq. 1) then
+	    do i=1,Nstep
+            !-- swendsen-wang
+            call ising_swendsenwang(myising)
+            call ising_spincorrel(myising%grid, i)
+	    enddo
+	elseif(samp_type .eq. 2) then
+	    do i=1,Nstep
+            !-- wolff
+            call ising_wolff(myising)
+            call ising_spincorrel(myising%grid, i)
+	    enddo
+	else
+	    stop 'unknown args'
+	endif
+
+	print *, array_G
+end subroutine ising_configcorrel
+
+
 
 end module ising_model
 
@@ -584,26 +555,37 @@ use ising_model
 use ising_parms
 implicit none
     type(ising) :: is1
-	real(8) :: beta
-	character(len=10) :: idxcs
-	integer :: i
+	character(len=20) :: tmp
+	integer :: n
 	
 	PBC = .true.
 	call init_seed()
 	
-	call read_parms('ising.parms')
+	call read_parms('is.parms')
+	n = command_argument_count()
+    if (n .ne. 0 .and. n .ne. 3) then
+        stop 'args number mismatch, for: beta, J, h'
+	end if
+	if(n .eq. 3) then
+	    call get_command_argument(1,tmp)
+	    read(tmp,*) parmb
+	    call get_command_argument(2,tmp)
+	    read(tmp,*) parmJ
+	    call get_command_argument(3,tmp)
+	    read(tmp,*) parmh
+	endif
 	
 	call alloc_ising(is1, Nsize)
 	
-	call set_ising(is1, parmJ, parmh, betamax)
-	
-	do i=1,Nsplit
-		beta = betamin + betamax * (i/real(Nsplit))
-		write(idxcs,'(i4)') i
-		open(unit=out_unit, file='beta_i'//trim(adjustl(idxcs))//'.dat', status='replace')
-		call ising_simul(is1, Nstep, beta)
-		close(out_unit)
-	enddo
+	if(work_type .eq. 0) then
+	    if(PRT) open(unit=out_unit, file='example.dat', status='replace')
+	    call ising_simul(is1)
+	    if(PRT) close(out_unit)
+	elseif(work_type .eq. 1) then
+	    call ising_configcorrel(is1)
+	else
+	    stop 'wrong work type'
+	endif
 	
 	call del_ising(is1)
 end program
