@@ -1,0 +1,10 @@
+# the size of 2D gird of Ising model
+40
+# the simulation steps
+10000000
+# parmb, parmJ, parmh
+0.5    1   0
+# sampling method
+0
+# work type
+1
