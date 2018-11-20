@@ -7,9 +7,15 @@ i=int(sys.argv[1])
 
 a=pd.read_csv('cor.csv', header=None, sep='\s+') 
 a=a.values
-a=a[i,:]
+a=a[i-1,:]
 
-plt.plot(np.arange(len(a)), a, 'r--')
-plt.show()
+#plt.show()
+#print(a)
 
-print(a.sum())
+s=0
+for i in range(len(a)):
+    if(a[i]<=0):
+        break
+    s+=a[i]
+    #print(i)
+print(s)
