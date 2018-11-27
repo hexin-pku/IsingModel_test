@@ -9,7 +9,7 @@ a=pd.read_csv('cor.csv', header=None, sep='\s+')
 a=a.values
 a=a[i-1,:]
 
-#plt.show()
+plt.show()
 #print(a)
 
 s=0
