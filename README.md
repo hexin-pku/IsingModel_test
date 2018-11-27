@@ -1,10 +1,6 @@
-
-<h4 style="text-align:right">CCME,&nbsp; Peking University</h4>
-***
-<p>
 <h1 style="text-align:center"><font face="Times Roman" size=6> Ising Model Simulation </font></h1>
 <br>
-<h2 style="text-align:center"><font face="Times Roman">Xin He, 1500011805 </font> </h2>
+<h2 style="text-align:center"><font face="Times Roman">XShin He</font> </h2>
 
 # Source
 
